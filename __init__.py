@@ -1,9 +1,9 @@
-# Pronunciation Tutor — Project Root
+# Pronunciation Tutor - Project Root
 
-"""
+r"""
 Run the app:
-    streamlit run app/streamlit_app.py
+    python run.py
 
 Run tests:
-    pytest tests/
+    .venv\Scripts\python -m pytest tests
 """
