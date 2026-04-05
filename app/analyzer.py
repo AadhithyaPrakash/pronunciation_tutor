@@ -23,6 +23,7 @@ from typing import List, Optional
 
 from domain.error_detection import detect_errors
 from domain.learning_logic import compute_accuracy
+from domain.phoneme_alignment import find_alignment
 from domain.severity_scoring import annotate_errors
 from infrastructure import database
 from services import asr_service, llm_service, mfa_service, phoneme_recognition_service
@@ -136,11 +137,9 @@ class PronunciationAnalyzer:
 
         # Per-word analysis
         word_reports: List[WordReport] = []
-        for word in words:
+        for index, word in enumerate(words):
             expected  = mfa_service.get_expected_phonemes(word)
-            alignment = next(
-                (a for a in alignments if a.word.lower() == word.lower()), None
-            )
+            alignment = find_alignment(alignments, word, index=index)
             detected = alignment.phoneme_sequence if alignment else []
             confs    = [p.confidence for p in alignment.phonemes] if alignment else []
 
@@ -202,7 +201,11 @@ class PronunciationAnalyzer:
                 best_accuracy=wr.accuracy,
                 errors=wr.errors,
             )
-        database.end_session(session_id=session_id, summary=report.overall_suggestion)
+        database.end_session(
+            session_id=session_id,
+            summary=report.overall_suggestion,
+            overall_score=report.overall_score,
+        )
         report.session_id = session_id
 
         return report

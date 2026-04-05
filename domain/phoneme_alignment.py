@@ -60,3 +60,35 @@ def build_word_alignment(
         for p in phoneme_data
     ]
     return WordAlignment(word=word, start=start, end=end, phonemes=tokens)
+
+
+def _normalise_word_token(word: str) -> str:
+    return "".join(
+        ch for ch in word.casefold().strip() if ch.isalnum() or ch in {"'", "-"}
+    )
+
+
+def find_alignment(
+    alignments: List[WordAlignment],
+    word: str,
+    index: Optional[int] = None,
+) -> Optional[WordAlignment]:
+    """Prefer the alignment at the same word index, then fall back to name match."""
+    target = _normalise_word_token(word)
+    if not target:
+        return None
+
+    if index is not None and 0 <= index < len(alignments):
+        candidate = alignments[index]
+        if _normalise_word_token(candidate.word) == target:
+            return candidate
+
+        ordered = [*alignments[index + 1 :], *alignments[:index]]
+    else:
+        ordered = alignments
+
+    for candidate in ordered:
+        if _normalise_word_token(candidate.word) == target:
+            return candidate
+
+    return None

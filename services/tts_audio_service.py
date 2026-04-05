@@ -16,10 +16,22 @@ from __future__ import annotations
 import io
 import logging
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AudioPayload:
+    data: bytes
+    format: str
+
+
+def word_audio_payload(word: str) -> Optional[AudioPayload]:
+    """Return audio bytes plus the correct MIME format for a single word."""
+    return _generate_payload(word, slow=True)
 
 
 def word_audio_bytes(word: str) -> Optional[bytes]:
@@ -27,15 +39,22 @@ def word_audio_bytes(word: str) -> Optional[bytes]:
     Return MP3 audio bytes for a single word spoken clearly.
     Returns None if both backends fail.
     """
-    return _generate_bytes(word, slow=True)
+    payload = word_audio_payload(word)
+    return payload.data if payload else None
+
+
+def sentence_audio_payload(sentence: str) -> Optional[AudioPayload]:
+    """Return audio bytes plus the correct MIME format for a full sentence."""
+    return _generate_payload(sentence, slow=False)
 
 
 def sentence_audio_bytes(sentence: str) -> Optional[bytes]:
     """Return MP3 audio bytes for a full sentence."""
-    return _generate_bytes(sentence, slow=False)
+    payload = sentence_audio_payload(sentence)
+    return payload.data if payload else None
 
 
-def _generate_bytes(text: str, slow: bool = False) -> Optional[bytes]:
+def _generate_payload(text: str, slow: bool = False) -> Optional[AudioPayload]:
     # --- Try gTTS first (internet required) ---
     try:
         from gtts import gTTS
@@ -43,7 +62,7 @@ def _generate_bytes(text: str, slow: bool = False) -> Optional[bytes]:
         gTTS(text=text, lang="en", slow=slow).write_to_fp(buf)
         buf.seek(0)
         logger.debug("gTTS generated audio for %r", text)
-        return buf.read()
+        return AudioPayload(data=buf.read(), format="audio/mp3")
     except Exception as gtts_err:
         logger.warning("gTTS failed (%s); trying pyttsx3 fallback", gtts_err)
 
@@ -60,7 +79,7 @@ def _generate_bytes(text: str, slow: bool = False) -> Optional[bytes]:
         data = Path(tmp_path).read_bytes()
         Path(tmp_path).unlink(missing_ok=True)
         logger.debug("pyttsx3 generated audio for %r", text)
-        return data
+        return AudioPayload(data=data, format="audio/wav")
     except Exception as pyttsx_err:
         logger.error("pyttsx3 fallback also failed (%s); no audio available", pyttsx_err)
         return None

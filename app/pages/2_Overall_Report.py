@@ -24,9 +24,11 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 import streamlit as st
 
-st.set_page_config(
-    page_title="Overall Pronunciation Report",
-    page_icon="📊",
+from app.ui import configure_page
+
+configure_page(
+    title="Overall Pronunciation Report",
+    icon="📊",
     layout="centered",
 )
 
@@ -336,10 +338,10 @@ if weak_words:
             # Correct pronunciation audio
             try:
                 from services import tts_audio_service
-                audio = tts_audio_service.word_audio_bytes(wr.word)
-                if audio:
+                audio_payload = tts_audio_service.word_audio_payload(wr.word)
+                if audio_payload:
                     st.markdown("**🔊 Hear the correct pronunciation:**")
-                    st.audio(audio, format="audio/mp3")
+                    st.audio(audio_payload.data, format=audio_payload.format)
             except Exception:
                 pass
 

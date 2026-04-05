@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from domain.error_detection import ErrorType, detect_errors
 from domain.learning_logic import compute_accuracy, should_explain
-from domain.phoneme_alignment import build_word_alignment
+from domain.phoneme_alignment import build_word_alignment, find_alignment
 from domain.severity_scoring import Severity, annotate_errors, score_severity
 
 
@@ -37,6 +37,19 @@ class TestPhonemeAlignment:
         alignment = build_word_alignment("test", 0.0, 0.0, [])
         assert alignment.phoneme_sequence == []
         assert alignment.average_confidence == 0.0
+
+    def test_find_alignment_prefers_same_index_for_repeated_words(self):
+        alignments = [
+            build_word_alignment("to", 0.0, 0.1, [{"phoneme": "T", "start": 0.0, "end": 0.05}]),
+            build_word_alignment("be", 0.1, 0.2, [{"phoneme": "B", "start": 0.1, "end": 0.15}]),
+            build_word_alignment("to", 0.2, 0.3, [{"phoneme": "T", "start": 0.2, "end": 0.25}]),
+        ]
+
+        first = find_alignment(alignments, "to", index=0)
+        second = find_alignment(alignments, "to", index=2)
+
+        assert first is alignments[0]
+        assert second is alignments[2]
 
 
 class TestErrorDetection:

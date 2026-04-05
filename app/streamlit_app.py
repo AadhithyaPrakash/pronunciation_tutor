@@ -5,10 +5,12 @@ Run with:
     streamlit run app/streamlit_app.py
 
 Flow:
+    0. Login / Register (pages/0_Login.py)
     1. Record audio
     2. Confirm / edit transcript
     3. Word-by-word phoneme analysis (this page)
     4. "View Full Report" → pages/2_Overall_Report.py
+    5. "Profile" → pages/3_Profile.py
 """
 
 from __future__ import annotations
@@ -36,13 +38,21 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 from app.analyzer import PronunciationAnalyzer, PronunciationReport, WordReport
+from app.ui import configure_page
 from services import tts_audio_service
+from infrastructure import database
 
-st.set_page_config(
-    page_title="Pronunciation Checker",
-    page_icon="🗣️",
+database.init_db()
+
+configure_page(
+    title="Pronunciation Checker",
+    icon="🗣️",
     layout="wide",
 )
+
+# ── Auth guard ────────────────────────────────────────────────────────────────
+if not st.session_state.get("user_id"):
+    st.switch_page("pages/0_Login.py")
 
 st.markdown("""
 <style>
@@ -91,11 +101,27 @@ def _save_audio(uploaded) -> Path:
     return Path(tmp.name)
 
 
+def _read_audio_bytes(audio_path: str | Path) -> bytes:
+    return Path(audio_path).read_bytes()
+
+
 analyzer: PronunciationAnalyzer = st.session_state.analyzer
 
-# ── Header ─────────────────────────────────────────────────────────────────
-st.title("🗣️ Pronunciation Checker")
-st.caption("Record → get instant phoneme-level feedback on every word.")
+# ── Header with user info ──────────────────────────────────────────────────────
+header_col, nav_col = st.columns([4, 1])
+with header_col:
+    st.title("🗣️ Pronunciation Checker")
+    st.caption("Record → get instant phoneme-level feedback on every word.")
+with nav_col:
+    user_name = st.session_state.get("user_name", "User")
+    st.markdown(f"👤 **{user_name}**")
+    if st.button("📊 My Profile", use_container_width=True):
+        st.switch_page("pages/3_Profile.py")
+    if st.button("🚪 Logout", use_container_width=True):
+        for k in ["user_id","user_name","username","user_email","stage","report","analyzer"]:
+            st.session_state.pop(k, None)
+        st.switch_page("pages/0_Login.py")
+
 st.divider()
 
 # ==========================================================================
@@ -103,14 +129,19 @@ st.divider()
 # ==========================================================================
 if st.session_state.stage == "record":
     st.subheader("Step 1 — Record your sentence")
-    st.info("Click the mic, speak any English sentence clearly, then stop.")
+    st.info("Prepare your microphone and keep background noise low.")
 
     audio_input = st.audio_input("🎙️ Click to record", key="audio_recorder")
 
-    if audio_input is not None:
+    st.markdown("**Or upload an existing recording (WAV/MP3)**")
+    uploaded_file = st.file_uploader("Upload audio", type=["wav", "mp3"], label_visibility="collapsed")
+
+    audio_to_process = audio_input or uploaded_file
+
+    if audio_to_process is not None:
         with st.spinner("Transcribing…"):
             try:
-                audio_path = _save_audio(audio_input)
+                audio_path = _save_audio(audio_to_process)
                 st.session_state.audio_path    = audio_path
                 raw = analyzer.transcribe(audio_path)
                 st.session_state.raw_transcript = raw
@@ -126,6 +157,8 @@ if st.session_state.stage == "record":
 # ==========================================================================
 elif st.session_state.stage == "confirm":
     st.subheader("Step 2 — Confirm what you said")
+
+    st.audio(_read_audio_bytes(st.session_state.audio_path), format="audio/wav")
 
     col_raw, col_edit = st.columns(2)
     with col_raw:
@@ -150,6 +183,7 @@ elif st.session_state.stage == "confirm":
                     report = analyzer.analyze(
                         audio_path=st.session_state.audio_path,
                         sentence=st.session_state.corrected,
+                        user_id=st.session_state.get("user_id"),
                     )
                     st.session_state.report = report
                     st.session_state.stage  = "report"
@@ -169,7 +203,6 @@ elif st.session_state.stage == "report":
     report: PronunciationReport = st.session_state.report
     score = report.overall_score
 
-    # ── Mini score banner ──────────────────────────────────────────────────
     score_color = (
         "#27ae60" if score >= 75
         else "#f39c12" if score >= 50
@@ -198,7 +231,6 @@ elif st.session_state.stage == "report":
 
     st.divider()
 
-    # ── Word-by-word breakdown ─────────────────────────────────────────────
     st.subheader("📝 Word-by-Word Phoneme Analysis")
 
     for wr in report.word_reports:
@@ -210,7 +242,6 @@ elif st.session_state.stage == "report":
         ):
             ph_col, det_col, audio_col = st.columns([3, 3, 2])
 
-            # Expected phonemes
             with ph_col:
                 st.markdown("**Expected:**")
                 error_exp = {e["expected_phoneme"] for e in wr.errors if e.get("expected_phoneme")}
@@ -221,7 +252,6 @@ elif st.session_state.stage == "report":
                 ]
                 st.markdown(" ".join(tags) or "*—*", unsafe_allow_html=True)
 
-            # Detected phonemes
             with det_col:
                 st.markdown("**You produced:**")
                 if wr.detected_phonemes:
@@ -235,15 +265,13 @@ elif st.session_state.stage == "report":
                 else:
                     st.markdown("*Not detected*")
 
-            # Audio button
             with audio_col:
                 st.markdown(f"**Score: {wr.score}/100**")
-                audio_bytes = tts_audio_service.word_audio_bytes(wr.word)
-                if audio_bytes:
+                audio_payload = tts_audio_service.word_audio_payload(wr.word)
+                if audio_payload:
                     st.markdown("🔊 **Correct:**")
-                    st.audio(audio_bytes, format="audio/mp3")
+                    st.audio(audio_payload.data, format=audio_payload.format)
 
-            # Error table
             if wr.errors:
                 st.markdown("**Errors:**")
                 rows = [{
@@ -254,13 +282,11 @@ elif st.session_state.stage == "report":
                 } for e in wr.errors]
                 st.table(rows)
 
-            # Suggestion
             if wr.suggestion:
                 st.success(f"💡 {wr.suggestion}")
 
     st.divider()
 
-    # ── Bottom CTA ────────────────────────────────────────────────────────
     col1, col2, col3 = st.columns([2, 2, 3])
     with col1:
         if st.button("📊 View Full Report →", type="primary",
@@ -271,3 +297,6 @@ elif st.session_state.stage == "report":
                      use_container_width=True, key="retry_btn_bottom"):
             _reset()
             st.rerun()
+    with col3:
+        if st.button("👤 View My Profile", use_container_width=True):
+            st.switch_page("pages/3_Profile.py")

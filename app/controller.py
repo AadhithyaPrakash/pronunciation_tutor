@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from domain.error_detection import detect_errors
 from domain.learning_logic import WordAttempt, WordProgress, compute_accuracy, should_explain
-from domain.phoneme_alignment import WordAlignment
+from domain.phoneme_alignment import WordAlignment, find_alignment
 from domain.severity_scoring import annotate_errors
 from infrastructure import database
 from services import asr_service, llm_service, mfa_service
@@ -137,7 +137,7 @@ class ConversationController:
             return
 
         expected  = mfa_service.get_expected_phonemes(word)
-        alignment = self._get_alignment_for_word(word)
+        alignment = self._get_alignment_for_word(self.session.word_index, word)
         detected  = alignment.phoneme_sequence if alignment else []
         confs     = [p.confidence for p in alignment.phonemes] if alignment else []
 
@@ -187,6 +187,10 @@ class ConversationController:
             word=word,
             expected_phonemes=expected,
         )
+        if detected is None:
+            logger.warning("Retry phoneme recognition unavailable for word='%s'", word)
+            detected = []
+
         # Give every detected phoneme a uniform confidence of 0.8 since
         # we don't have per-phoneme scores from wav2vec2 in this mode
         confs = [0.8] * len(detected)
@@ -258,6 +262,9 @@ class ConversationController:
 
     def _finish_session(self) -> None:
         results = database.get_session_results(self.session.session_id)
+        overall_score = round(
+            sum(row["best_accuracy"] for row in results) / max(len(results), 1) * 100
+        )
         session_data = {
             "words_practiced": self.session.words,
             "word_results":    results,
@@ -265,7 +272,11 @@ class ConversationController:
         }
         summary = llm_service.generate_session_summary(session_data)
         self.session.summary = summary
-        database.end_session(session_id=self.session.session_id, summary=summary)
+        database.end_session(
+            session_id=self.session.session_id,
+            summary=summary,
+            overall_score=overall_score,
+        )
         self._set_state(SessionState.SESSION_SUMMARY, "all words done")
 
     def _common_phoneme_errors(self) -> list:
@@ -279,9 +290,13 @@ class ConversationController:
                         counts[ep] += 1
         return [ph for ph, _ in counts.most_common(5)]
 
-    def _get_alignment_for_word(self, word: str) -> Optional[WordAlignment]:
-        for a in self.session.alignments:
-            if a.word.lower() == word.lower():
-                return a
+    def _get_alignment_for_word(
+        self,
+        index: int,
+        word: str,
+    ) -> Optional[WordAlignment]:
+        alignment = find_alignment(self.session.alignments, word, index=index)
+        if alignment is not None:
+            return alignment
         logger.debug("No alignment found for word='%s'", word)
         return None
