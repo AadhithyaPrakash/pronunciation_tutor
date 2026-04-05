@@ -392,10 +392,10 @@ st.markdown("")
 # ── Navigation ────────────────────────────────────────────────────────────
 col_back, col_new, _ = st.columns([2, 2, 3])
 with col_back:
-    if st.button("← Back to Analysis", use_container_width=True):
+    if st.button("← Back to Analysis", width="stretch"):
         st.switch_page("streamlit_app.py")
 with col_new:
-    if st.button("🔁 Try Another Sentence", type="primary", use_container_width=True):
+    if st.button("🔁 Try Another Sentence", type="primary", width="stretch"):
         # Reset and go back to main page
         if "stage" in st.session_state:
             st.session_state.stage   = "record"

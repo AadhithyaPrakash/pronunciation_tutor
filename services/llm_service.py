@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _gemini_client = None
 _gemini_legacy_mode = False
 _gemini_disabled_until = 0.0
+_ollama_disabled_until = 0.0
 _env_checked = False
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
@@ -147,7 +148,33 @@ def _gemini_backoff_seconds(exc: Exception) -> int:
     return 60
 
 
+def _is_gemini_quota_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "429" in message or "RESOURCE_EXHAUSTED" in message
+
+
+def _is_gemini_auth_error(exc: Exception) -> bool:
+    message = str(exc).upper()
+    return (
+        "403" in message
+        or "PERMISSION_DENIED" in message
+        or "API KEY WAS REPORTED AS LEAKED" in message
+        or "API_KEY_INVALID" in message
+    )
+
+
+def _ollama_backoff_seconds(exc: Exception) -> int:
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
+        return 300
+    return 60
+
+
 def _generate_with_ollama(prompt: str, task_name: str) -> str:
+    global _ollama_disabled_until
+    if time.time() < _ollama_disabled_until:
+        wait = int(_ollama_disabled_until - time.time())
+        raise RuntimeError(f"Ollama temporarily disabled. Retry after ~{wait}s.")
+
     url = f"{_ollama_base_url()}/api/generate"
     payload = {
         "model": _ollama_model_name(),
@@ -180,7 +207,7 @@ def _generate_with_ollama(prompt: str, task_name: str) -> str:
 
 
 def _generate(prompt: str, task_name: str) -> str:
-    global _gemini_disabled_until
+    global _gemini_disabled_until, _ollama_disabled_until
     backend = _llm_backend()
     if backend == "ollama":
         return _generate_with_ollama(prompt, task_name)
@@ -197,10 +224,18 @@ def _generate(prompt: str, task_name: str) -> str:
             return _generate_with_gemini(prompt, task_name)
         except Exception as exc:
             last_error = exc
-            if engine == "gemini" and ("429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)):
-                backoff = _gemini_backoff_seconds(exc)
-                _gemini_disabled_until = time.time() + backoff
-                logger.warning("Gemini quota reached. Disabling Gemini for %ss.", backoff)
+            if engine == "gemini":
+                if _is_gemini_quota_error(exc):
+                    backoff = _gemini_backoff_seconds(exc)
+                    _gemini_disabled_until = time.time() + backoff
+                    logger.warning("Gemini quota reached. Disabling Gemini for %ss.", backoff)
+                elif _is_gemini_auth_error(exc):
+                    _gemini_disabled_until = time.time() + 3600
+                    logger.warning("Gemini auth/config failed. Disabling Gemini for 3600s.")
+            elif engine == "ollama" and "temporarily disabled" not in str(exc).lower():
+                backoff = _ollama_backoff_seconds(exc)
+                _ollama_disabled_until = time.time() + backoff
+                logger.warning("Ollama unavailable. Disabling Ollama for %ss.", backoff)
             logger.warning("%s backend failed for task=%s: %s", engine, task_name, exc)
     raise RuntimeError(f"All LLM backends failed for task={task_name}") from last_error
 

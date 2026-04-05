@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import List, Optional
 
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 _processor = None
 _model      = None
 _model_failed = False
+_model_lock = threading.Lock()
 
 MODEL_ID    = "vitouphy/wav2vec2-xls-r-300m-timit-phoneme"
 SAMPLE_RATE = 16_000
@@ -141,26 +143,39 @@ def _get_model():
         raise RuntimeError("wav2vec2 model previously failed; skipping.")
     if _processor is not None:
         return _processor, _model
-    try:
-        from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
-        logger.info("Loading phoneme model: %s", MODEL_ID)
-        _processor = Wav2Vec2Processor.from_pretrained(MODEL_ID)
-        _model     = Wav2Vec2ForCTC.from_pretrained(MODEL_ID)
-        _model.eval()
-        # Log a sample of the vocabulary so we can verify token format
-        vocab = _processor.tokenizer.get_vocab()
-        sample = list(vocab.keys())[:60]
-        logger.info("Model vocab sample (first 60): %s", sample)
-        logger.info("Phoneme model loaded OK")
-        return _processor, _model
-    except Exception as exc:
-        _model_failed = True
-        raise RuntimeError(f"Failed to load phoneme model: {exc}") from exc
+
+    with _model_lock:
+        if _model_failed:
+            raise RuntimeError("wav2vec2 model previously failed; skipping.")
+        if _processor is not None:
+            return _processor, _model
+        try:
+            from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+
+            logger.info("Loading phoneme model: %s", MODEL_ID)
+            _processor = Wav2Vec2Processor.from_pretrained(MODEL_ID)
+            _model = Wav2Vec2ForCTC.from_pretrained(MODEL_ID)
+            _model.eval()
+            # Log a sample of the vocabulary so we can verify token format
+            vocab = _processor.tokenizer.get_vocab()
+            sample = list(vocab.keys())[:60]
+            logger.info("Model vocab sample (first 60): %s", sample)
+            logger.info("Phoneme model loaded OK")
+            return _processor, _model
+        except Exception as exc:
+            _model_failed = True
+            raise RuntimeError(f"Failed to load phoneme model: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
 # Audio loading (multi-backend, robust)
 # ---------------------------------------------------------------------------
+
+def warmup_model() -> str:
+    """Eagerly load the phoneme model and return model id."""
+    _get_model()
+    return MODEL_ID
+
 
 def _load_audio_as_float32(audio_path: str | Path) -> np.ndarray:
     """Load any audio file as float32 mono at 16 kHz."""

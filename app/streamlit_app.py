@@ -16,6 +16,7 @@ Flow:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -39,16 +40,49 @@ logger = logging.getLogger(__name__)
 
 from app.analyzer import PronunciationAnalyzer, PronunciationReport, WordReport
 from app.ui import configure_page
-from services import tts_audio_service
+from services import asr_service, phoneme_recognition_service, tts_audio_service
 from infrastructure import database
-
-database.init_db()
 
 configure_page(
     title="Pronunciation Checker",
     icon="🗣️",
     layout="wide",
 )
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+@st.cache_resource(show_spinner=False)
+def _initialize_runtime_dependencies() -> dict:
+    """Initialize DB and speech models once per Streamlit server process."""
+    database.init_db()
+    asr_backend = asr_service.warmup_model()
+    phoneme_model = phoneme_recognition_service.warmup_model()
+    return {
+        "asr_backend": asr_backend,
+        "phoneme_model": phoneme_model,
+    }
+
+
+if _env_flag("PRELOAD_MODELS_ON_STARTUP", True):
+    with st.spinner("Initializing database and speech models..."):
+        try:
+            _initialize_runtime_dependencies()
+        except Exception as exc:
+            logger.exception("Startup initialization failed")
+            st.error(
+                "Initialization failed before recorder startup. "
+                "Please check model/network setup and restart.\n\n"
+                f"Details: {exc}"
+            )
+            st.stop()
+else:
+    database.init_db()
 
 # ── Auth guard ────────────────────────────────────────────────────────────────
 if not st.session_state.get("user_id"):
@@ -115,9 +149,9 @@ with header_col:
 with nav_col:
     user_name = st.session_state.get("user_name", "User")
     st.markdown(f"👤 **{user_name}**")
-    if st.button("📊 My Profile", use_container_width=True):
+    if st.button("📊 My Profile", width="stretch"):
         st.switch_page("pages/3_Profile.py")
-    if st.button("🚪 Logout", use_container_width=True):
+    if st.button("🚪 Logout", width="stretch"):
         for k in ["user_id","user_name","username","user_email","stage","report","analyzer"]:
             st.session_state.pop(k, None)
         st.switch_page("pages/0_Login.py")
@@ -177,7 +211,7 @@ elif st.session_state.stage == "confirm":
     st.markdown("")
     col_a, col_r, _ = st.columns([2, 1, 4])
     with col_a:
-        if st.button("🔍 Analyse Pronunciation", type="primary", use_container_width=True):
+        if st.button("🔍 Analyse Pronunciation", type="primary", width="stretch"):
             with st.spinner("Analysing phonemes…"):
                 try:
                     report = analyzer.analyze(
@@ -192,7 +226,7 @@ elif st.session_state.stage == "confirm":
                     logger.exception("Analysis failed")
                     st.error(f"Analysis failed: {exc}")
     with col_r:
-        if st.button("🔄 Re-record", use_container_width=True):
+        if st.button("🔄 Re-record", width="stretch"):
             _reset()
             st.rerun()
 
@@ -226,7 +260,7 @@ elif st.session_state.stage == "report":
         st.markdown(f'**Sentence:** *"{report.sentence}"*')
     with btn_col:
         if st.button("📊 View Full Report →", type="primary",
-                     use_container_width=True, key="report_btn_top"):
+                     width="stretch", key="report_btn_top"):
             st.switch_page("pages/2_Overall_Report.py")
 
     st.divider()
@@ -290,13 +324,13 @@ elif st.session_state.stage == "report":
     col1, col2, col3 = st.columns([2, 2, 3])
     with col1:
         if st.button("📊 View Full Report →", type="primary",
-                     use_container_width=True, key="report_btn_bottom"):
+                     width="stretch", key="report_btn_bottom"):
             st.switch_page("pages/2_Overall_Report.py")
     with col2:
         if st.button("🔁 Try Another Sentence",
-                     use_container_width=True, key="retry_btn_bottom"):
+                     width="stretch", key="retry_btn_bottom"):
             _reset()
             st.rerun()
     with col3:
-        if st.button("👤 View My Profile", use_container_width=True):
+        if st.button("👤 View My Profile", width="stretch"):
             st.switch_page("pages/3_Profile.py")

@@ -196,7 +196,7 @@ with form_col:
             username = st.text_input("Username", key="login_username")
             password = st.text_input("Password", type="password", key="login_password")
 
-            if st.button("Login", type="primary", use_container_width=True, key="btn_login"):
+            if st.button("Login", type="primary", width="stretch", key="btn_login"):
                 if not username or not password:
                     st.error("Please enter both username and password.")
                 else:
@@ -218,7 +218,7 @@ with form_col:
             r_password = st.text_input("Password", type="password", key="reg_pass")
             r_confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
 
-            if st.button("Create Account", type="primary", use_container_width=True, key="btn_register"):
+            if st.button("Create Account", type="primary", width="stretch", key="btn_register"):
                 if not all([r_name, r_username, r_email, r_password, r_confirm]):
                     st.error("Please fill in all fields.")
                 elif r_password != r_confirm:

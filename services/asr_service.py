@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _model = None
 _backend_in_use = None
+_model_lock = threading.Lock()
 
 _model_size        = os.getenv("WHISPER_MODEL", "base").split("#", 1)[0].strip()
 _preferred_backend = os.getenv("ASR_BACKEND", "faster_whisper").strip().lower()
@@ -56,27 +58,31 @@ def _get_model():
     if _model is not None:
         return _model, _backend_in_use
 
-    loaders = {
-        "faster_whisper": _load_faster_whisper,
-        "openai_whisper": _load_openai_whisper,
-    }
-    backend_order = (
-        ["faster_whisper", "openai_whisper"]
-        if _preferred_backend != "openai_whisper"
-        else ["openai_whisper", "faster_whisper"]
-    )
-    last_error = None
-    for name in backend_order:
-        try:
-            started = time.perf_counter()
-            model   = loaders[name]()
-            _model, _backend_in_use = model, name
-            logger.info("ASR ready: %s (%.2fs)", name, time.perf_counter() - started)
+    with _model_lock:
+        if _model is not None:
             return _model, _backend_in_use
-        except Exception as exc:
-            last_error = exc
-            logger.error("ASR backend '%s' failed: %s", name, exc)
-    raise RuntimeError("No ASR backend available.") from last_error
+
+        loaders = {
+            "faster_whisper": _load_faster_whisper,
+            "openai_whisper": _load_openai_whisper,
+        }
+        backend_order = (
+            ["faster_whisper", "openai_whisper"]
+            if _preferred_backend != "openai_whisper"
+            else ["openai_whisper", "faster_whisper"]
+        )
+        last_error = None
+        for name in backend_order:
+            try:
+                started = time.perf_counter()
+                model = loaders[name]()
+                _model, _backend_in_use = model, name
+                logger.info("ASR ready: %s (%.2fs)", name, time.perf_counter() - started)
+                return _model, _backend_in_use
+            except Exception as exc:
+                last_error = exc
+                logger.error("ASR backend '%s' failed: %s", name, exc)
+        raise RuntimeError("No ASR backend available.") from last_error
 
 
 def _paths_match(left: str | Path, right: str | Path) -> bool:
@@ -130,6 +136,12 @@ def _transcribe_preprocessed_audio(clean_path: str | Path) -> str:
 
 
 # ── Audio preprocessing for poor mics ───────────────────────────────────────
+
+def warmup_model() -> str:
+    """Eagerly load the ASR model and return the active backend name."""
+    _, backend = _get_model()
+    return backend
+
 
 def _preprocess_audio(audio_path: str | Path) -> str:
     """

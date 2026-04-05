@@ -7,11 +7,9 @@ session history table, per-session report, overall downloadable PDF report.
 
 from __future__ import annotations
 
-import io
-import json
 import smtplib
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -79,7 +77,7 @@ def _build_overall_report(name: str, email: str, stats: dict, sessions: list) ->
         "=" * 60,
         f"Student       : {name}",
         f"Email         : {email}",
-        f"Report Date   : {datetime.utcnow().strftime('%Y-%m-%d')}",
+        f"Report Date   : {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
         "",
         "SUMMARY STATISTICS",
         "-" * 40,
@@ -177,7 +175,7 @@ with col_h:
     st.title(f"👤 {user_name}'s Profile")
     st.caption(f"📧 {email}  ·  Member since {sessions[-1]['started_at'][:10] if sessions else 'N/A'}")
 with col_btn:
-    if st.button("🚪 Logout", use_container_width=True):
+    if st.button("🚪 Logout", width="stretch"):
         for k in ["user_id","user_name","username","user_email","stage","report","analyzer"]:
             st.session_state.pop(k, None)
         st.switch_page("pages/0_Login.py")
@@ -247,7 +245,7 @@ else:
             "Score":    f"{badge} {score}/100",
         })
     df_hist = pd.DataFrame(rows)
-    st.dataframe(df_hist, use_container_width=True, hide_index=True)
+    st.dataframe(df_hist, width="stretch", hide_index=True)
 
     st.divider()
 
@@ -278,7 +276,7 @@ else:
             data=report_bytes,
             file_name=f"session_{chosen_id}_report.txt",
             mime="text/plain",
-            use_container_width=True,
+            width="stretch",
         )
 
     # Word table
@@ -311,12 +309,12 @@ else:
             data=overall_bytes,
             file_name="overall_pronunciation_report.txt",
             mime="text/plain",
-            use_container_width=True,
+            width="stretch",
             type="primary",
         )
     with mail_col:
         send_email = st.text_input("Send to email:", value=email, key="email_send")
-        if st.button("📧 Send Report to Email", use_container_width=True):
+        if st.button("📧 Send Report to Email", width="stretch"):
             if "@" not in send_email:
                 st.error("Please enter a valid email.")
             else:

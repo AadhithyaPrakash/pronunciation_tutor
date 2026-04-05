@@ -11,13 +11,16 @@ import logging
 import os
 import secrets
 import sqlite3
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path(os.getenv("DB_PATH", "data/pronunciation_tutor.db")).expanduser()
+_INIT_LOCK = threading.Lock()
+_INITIALIZED = False
 
 
 def _connect() -> sqlite3.Connection:
@@ -70,26 +73,36 @@ CREATE TABLE IF NOT EXISTS phoneme_errors (
 
 
 def init_db() -> None:
-    with _connect() as conn:
-        conn.executescript(SCHEMA)
-        # Migration: add missing columns if upgrading from older schema
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN overall_score INTEGER DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN username TEXT")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
-        except Exception:
-            pass
-    logger.info("Database initialized at %s", DB_PATH)
+    global _INITIALIZED
+    if _INITIALIZED:
+        return
+
+    with _INIT_LOCK:
+        if _INITIALIZED:
+            return
+
+        with _connect() as conn:
+            conn.executescript(SCHEMA)
+            # Migration: add missing columns if upgrading from older schema
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN overall_score INTEGER DEFAULT 0")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN username TEXT")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+            except Exception:
+                pass
+
+        _INITIALIZED = True
+        logger.info("Database initialized at %s", DB_PATH)
 
 
 # ── Password helpers ─────────────────────────────────────────────────────────
@@ -276,4 +289,4 @@ def get_user_stats(user_id: int) -> dict:
 
 
 def _now() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
